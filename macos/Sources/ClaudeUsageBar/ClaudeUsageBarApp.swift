@@ -5,6 +5,7 @@ struct ClaudeUsageBarApp: App {
     @StateObject private var service = UsageService()
     @StateObject private var historyService = UsageHistoryService()
     @StateObject private var notificationService = NotificationService()
+    @StateObject private var resetCommandService = ResetCommandService()
     @StateObject private var appUpdater = AppUpdater()
 
     var body: some Scene {
@@ -28,6 +29,7 @@ struct ClaudeUsageBarApp: App {
                     historyService.loadHistory()
                     service.historyService = historyService
                     service.notificationService = notificationService
+                    service.resetCommandService = resetCommandService
                     service.startPolling()
                 }
         }
@@ -36,7 +38,8 @@ struct ClaudeUsageBarApp: App {
         Settings {
             SettingsWindowContent(
                 service: service,
-                notificationService: notificationService
+                notificationService: notificationService,
+                resetCommandService: resetCommandService
             )
         }
         .windowResizability(.contentSize)

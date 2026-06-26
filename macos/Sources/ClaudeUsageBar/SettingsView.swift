@@ -4,6 +4,7 @@ import ServiceManagement
 struct SettingsWindowContent: View {
     @ObservedObject var service: UsageService
     @ObservedObject var notificationService: NotificationService
+    @ObservedObject var resetCommandService: ResetCommandService
 
     var body: some View {
         Form {
@@ -47,6 +48,19 @@ struct SettingsWindowContent: View {
                     Button("Sign Out") {
                         service.signOut()
                     }
+                }
+
+                Section("Auto-run on reset") {
+                    Toggle(
+                        "Run `claude -p hi` when the 5-hour window resets",
+                        isOn: Binding(
+                            get: { resetCommandService.isEnabled },
+                            set: { resetCommandService.setEnabled($0) }
+                        )
+                    )
+                    Text("Output is logged to \(ResetCommandService.logFileURL.path(percentEncoded: false))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }

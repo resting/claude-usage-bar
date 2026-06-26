@@ -13,6 +13,7 @@ class UsageService: ObservableObject {
 
     var historyService: UsageHistoryService?
     var notificationService: NotificationService?
+    var resetCommandService: ResetCommandService?
 
     private var timer: Timer?
     private let session: URLSession
@@ -290,6 +291,7 @@ class UsageService: ObservableObject {
             lastUpdated = Date()
             historyService?.recordDataPoint(pct5h: pct5h, pct7d: pct7d)
             notificationService?.checkAndNotify(pct5h: pct5h, pct7d: pct7d, pctExtra: pctExtra)
+            resetCommandService?.handleReset(resetsAt: usage?.fiveHour?.resetsAtDate)
             if currentInterval != baseInterval {
                 currentInterval = baseInterval
                 scheduleTimer()
