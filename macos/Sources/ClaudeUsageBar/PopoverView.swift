@@ -298,7 +298,7 @@ private struct UsageBucketRow: View {
             ProgressView(value: (bucket?.utilization ?? 0) / 100.0, total: 1.0)
                 .tint(colorForPct((bucket?.utilization ?? 0) / 100.0))
             if let resetDate = bucket?.resetsAtDate {
-                Text("Resets \(resetDate, style: .relative)")
+                Text("Resets \(resetDate, style: .relative) (\(resetDate, style: .time))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
