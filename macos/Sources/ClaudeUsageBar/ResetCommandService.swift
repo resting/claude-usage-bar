@@ -69,6 +69,13 @@ class ResetCommandService: ObservableObject {
         runCommand()
     }
 
+    /// Called once on app launch. Runs the command unconditionally when the
+    /// setting is enabled, since there's no prior `resetsAt` to compare against yet.
+    func runOnAppLaunchIfEnabled() {
+        guard isEnabled else { return }
+        runCommand()
+    }
+
     // MARK: - Command execution
 
     private func runCommand() {

@@ -31,6 +31,7 @@ struct ClaudeUsageBarApp: App {
                     service.notificationService = notificationService
                     service.resetCommandService = resetCommandService
                     service.startPolling()
+                    resetCommandService.runOnAppLaunchIfEnabled()
                 }
         }
         .menuBarExtraStyle(.window)
