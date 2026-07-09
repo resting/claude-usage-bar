@@ -52,7 +52,7 @@ struct SettingsWindowContent: View {
 
                 Section("Auto-run on reset") {
                     Toggle(
-                        "Run `claude -p hi` when the 5-hour window resets",
+                        "Run `\(ResetCommandService.command)` when the 5-hour window resets",
                         isOn: Binding(
                             get: { resetCommandService.isEnabled },
                             set: { resetCommandService.setEnabled($0) }

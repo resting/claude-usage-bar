@@ -90,6 +90,31 @@ final class ResetCommandServiceTests: XCTestCase {
         svc.handleReset(resetsAt: futureReset, now: now)  // must not crash or fire
     }
 
+    // MARK: - extractCurrentSessionLine
+
+    func testExtractCurrentSessionLine_findsAndTrimsLine() {
+        let output = """
+        Some banner text
+
+          Current session: 1% used · resets Jul 9 at 3:19pm (Asia/Singapore)
+
+        Other stuff
+        """
+        XCTAssertEqual(
+            ResetCommandService.extractCurrentSessionLine(from: output),
+            "Current session: 1% used · resets Jul 9 at 3:19pm (Asia/Singapore)"
+        )
+    }
+
+    func testExtractCurrentSessionLine_missingLine_returnsNil() {
+        let output = "Hi! What are you working on today?"
+        XCTAssertNil(ResetCommandService.extractCurrentSessionLine(from: output))
+    }
+
+    func testExtractCurrentSessionLine_emptyOutput_returnsNil() {
+        XCTAssertNil(ResetCommandService.extractCurrentSessionLine(from: ""))
+    }
+
     @MainActor
     func testHandleReset_realResetDetected() {
         // After a genuine reset, the condition passes.

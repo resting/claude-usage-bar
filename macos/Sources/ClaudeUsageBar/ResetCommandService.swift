@@ -13,7 +13,7 @@ func didWindowReset(previous: Date?, current: Date?, now: Date = Date()) -> Bool
     return prev <= now && curr > now
 }
 
-/// Runs a fixed shell command (`claude -p hi`) whenever the 5-hour usage window resets.
+/// Runs a fixed shell command (`claude -p /usage`) whenever the 5-hour usage window resets.
 ///
 /// ## How reset detection works
 ///
@@ -39,7 +39,7 @@ func didWindowReset(previous: Date?, current: Date?, now: Date = Date()) -> Bool
 /// The directory is created automatically on first write.
 @MainActor
 class ResetCommandService: ObservableObject {
-    static let command = "claude -p hi"
+    static let command = "claude -p /usage"
 
     @Published private(set) var isEnabled: Bool
 
@@ -78,6 +78,14 @@ class ResetCommandService: ObservableObject {
 
     // MARK: - Command execution
 
+    /// Extracts the "Current session: ..." line from `claude -p /usage` output.
+    nonisolated static func extractCurrentSessionLine(from output: String) -> String? {
+        output
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { $0.hasPrefix("Current session:") }
+    }
+
     private func runCommand() {
         let cmd = Self.command
         appendLog("=== \(timestamp()) Running: \(cmd) ===")
@@ -105,7 +113,11 @@ class ResetCommandService: ObservableObject {
 
                 await MainActor.run {
                     self.appendLog("exit: \(status)")
-                    if !stdout.isEmpty { self.appendLog("stdout:\n\(stdout.trimmingCharacters(in: .newlines))") }
+                    if let sessionLine = Self.extractCurrentSessionLine(from: stdout) {
+                        self.appendLog(sessionLine)
+                    } else if !stdout.isEmpty {
+                        self.appendLog("Current session line not found in output")
+                    }
                     if !stderr.isEmpty { self.appendLog("stderr:\n\(stderr.trimmingCharacters(in: .newlines))") }
                     self.appendLog("=== done ===\n")
                 }
