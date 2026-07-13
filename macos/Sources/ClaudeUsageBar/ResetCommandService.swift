@@ -13,7 +13,8 @@ func didWindowReset(previous: Date?, current: Date?, now: Date = Date()) -> Bool
     return prev <= now && curr > now
 }
 
-/// Runs a fixed shell command (`claude -p /usage`) whenever the 5-hour usage window resets.
+/// Runs two fixed shell commands (`claude -p hi` then `claude -p /usage`) whenever the
+/// 5-hour usage window resets.
 ///
 /// ## How reset detection works
 ///
@@ -34,12 +35,15 @@ func didWindowReset(previous: Date?, current: Date?, now: Date = Date()) -> Bool
 /// All runs are logged to:
 ///   `~/Library/Logs/ClaudeUsageBar/reset-command.log`
 ///
-/// Each entry records the ISO-8601 timestamp, exit code, stdout, and stderr, so failures
+/// `claude -p hi` runs first (its full trimmed stdout is logged), followed by
+/// `claude -p /usage` (only the extracted `Current session: ...` line is logged).
+/// Each entry records the ISO-8601 timestamp, exit code, and output, so failures
 /// (e.g. `claude` not on PATH) are diagnosable without attaching a debugger.
 /// The directory is created automatically on first write.
 @MainActor
 class ResetCommandService: ObservableObject {
-    static let command = "claude -p /usage"
+    static let command = "claude -p hi"
+    static let usageCommand = "claude -p /usage"
 
     @Published private(set) var isEnabled: Bool
 
@@ -86,39 +90,44 @@ class ResetCommandService: ObservableObject {
             .first { $0.hasPrefix("Current session:") }
     }
 
+    /// Runs `claude -p hi` (logging its full trimmed stdout), then `claude -p /usage`
+    /// (logging only the extracted "Current session: ..." line) — in that order.
     private func runCommand() {
-        let cmd = Self.command
-        appendLog("=== \(timestamp()) Running: \(cmd) ===")
+        let firstCmd = Self.command
+        let usageCmd = Self.usageCommand
+        appendLog("=== \(timestamp()) Running: \(firstCmd) ===")
 
         // Spawn via the user's login shell so PATH is fully loaded (e.g. ~/.zshrc, nvm, homebrew).
         // Without -l the GUI app's minimal PATH would fail to resolve `claude`.
         Task.detached(priority: .background) {
-            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: shell)
-            proc.arguments = ["-lc", cmd]
+            do {
+                let result = try Self.runShell(firstCmd)
+                await MainActor.run {
+                    self.appendLog("exit: \(result.status)")
+                    let trimmed = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { self.appendLog(trimmed) }
+                    if !result.stderr.isEmpty { self.appendLog("stderr:\n\(result.stderr.trimmingCharacters(in: .newlines))") }
+                }
+            } catch {
+                await MainActor.run {
+                    self.appendLog("error launching process: \(error.localizedDescription)\n")
+                }
+            }
 
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
-            proc.standardOutput = stdoutPipe
-            proc.standardError = stderrPipe
+            await MainActor.run {
+                self.appendLog("=== \(self.timestamp()) Running: \(usageCmd) ===")
+            }
 
             do {
-                try proc.run()
-                proc.waitUntilExit()
-
-                let stdout = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                let status = proc.terminationStatus
-
+                let result = try Self.runShell(usageCmd)
                 await MainActor.run {
-                    self.appendLog("exit: \(status)")
-                    if let sessionLine = Self.extractCurrentSessionLine(from: stdout) {
+                    self.appendLog("exit: \(result.status)")
+                    if let sessionLine = Self.extractCurrentSessionLine(from: result.stdout) {
                         self.appendLog(sessionLine)
-                    } else if !stdout.isEmpty {
+                    } else if !result.stdout.isEmpty {
                         self.appendLog("Current session line not found in output")
                     }
-                    if !stderr.isEmpty { self.appendLog("stderr:\n\(stderr.trimmingCharacters(in: .newlines))") }
+                    if !result.stderr.isEmpty { self.appendLog("stderr:\n\(result.stderr.trimmingCharacters(in: .newlines))") }
                     self.appendLog("=== done ===\n")
                 }
             } catch {
@@ -127,6 +136,28 @@ class ResetCommandService: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Runs `command` via the user's login shell (`$SHELL -lc`) and captures its exit
+    /// status, stdout, and stderr. `nonisolated` so it can execute on the background
+    /// thread inside `Task.detached` without hopping onto the main actor.
+    private nonisolated static func runShell(_ command: String) throws -> (status: Int32, stdout: String, stderr: String) {
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: shell)
+        proc.arguments = ["-lc", command]
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        proc.standardOutput = stdoutPipe
+        proc.standardError = stderrPipe
+
+        try proc.run()
+        proc.waitUntilExit()
+
+        let stdout = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return (proc.terminationStatus, stdout, stderr)
     }
 
     // MARK: - Logging
