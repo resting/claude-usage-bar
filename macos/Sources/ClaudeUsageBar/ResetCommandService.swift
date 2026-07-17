@@ -13,6 +13,27 @@ func didWindowReset(previous: Date?, current: Date?, now: Date = Date()) -> Bool
     return prev <= now && curr > now
 }
 
+/// Pure logic: returns true when `now`'s local time-of-day falls within the
+/// `[start, end)` window, both measured as minutes since midnight.
+///
+/// The window wraps across midnight when `start > end` (e.g. 22:00–06:00 means
+/// "10pm through 6am"). A zero-length window (`start == end`) matches nothing.
+func isWithinIgnoreWindow(
+    startMinutes: Int,
+    endMinutes: Int,
+    now: Date = Date(),
+    calendar: Calendar = .current
+) -> Bool {
+    guard startMinutes != endMinutes else { return false }
+    let comps = calendar.dateComponents([.hour, .minute], from: now)
+    let current = (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
+    if startMinutes < endMinutes {
+        return current >= startMinutes && current < endMinutes
+    } else {
+        return current >= startMinutes || current < endMinutes
+    }
+}
+
 /// Runs two fixed shell commands (`claude -p hi` then `claude -p /usage`) whenever the
 /// 5-hour usage window resets.
 ///
@@ -47,11 +68,21 @@ class ResetCommandService: ObservableObject {
 
     @Published private(set) var isEnabled: Bool
 
+    /// When enabled, a reset that lands inside `[ignoreStartMinutes, ignoreEndMinutes)`
+    /// (local time-of-day) is ignored and dropped — the command does not run for it.
+    @Published private(set) var ignoreWindowEnabled: Bool
+    @Published private(set) var ignoreStartMinutes: Int
+    @Published private(set) var ignoreEndMinutes: Int
+
     /// The `resetsAt` value seen on the previous poll — used to detect a genuine rollover.
     private var previousResetsAt: Date?
 
     init() {
         isEnabled = UserDefaults.standard.bool(forKey: "autoRunOnResetEnabled")
+        ignoreWindowEnabled = UserDefaults.standard.bool(forKey: "ignoreWindowEnabled")
+        // Default to a 23:00–07:00 quiet window when nothing is stored yet.
+        ignoreStartMinutes = (UserDefaults.standard.object(forKey: "ignoreWindowStartMinutes") as? Int) ?? (23 * 60)
+        ignoreEndMinutes = (UserDefaults.standard.object(forKey: "ignoreWindowEndMinutes") as? Int) ?? (7 * 60)
     }
 
     func setEnabled(_ value: Bool) {
@@ -59,6 +90,31 @@ class ResetCommandService: ObservableObject {
         UserDefaults.standard.set(value, forKey: "autoRunOnResetEnabled")
         // Clear the baseline so toggling on never double-fires for the current window.
         previousResetsAt = nil
+    }
+
+    func setIgnoreWindowEnabled(_ value: Bool) {
+        ignoreWindowEnabled = value
+        UserDefaults.standard.set(value, forKey: "ignoreWindowEnabled")
+    }
+
+    func setIgnoreStartMinutes(_ value: Int) {
+        ignoreStartMinutes = value
+        UserDefaults.standard.set(value, forKey: "ignoreWindowStartMinutes")
+    }
+
+    func setIgnoreEndMinutes(_ value: Int) {
+        ignoreEndMinutes = value
+        UserDefaults.standard.set(value, forKey: "ignoreWindowEndMinutes")
+    }
+
+    /// True when the ignore window is enabled and `now` falls inside it.
+    private func isInIgnoreWindow(now: Date) -> Bool {
+        guard ignoreWindowEnabled else { return false }
+        return isWithinIgnoreWindow(startMinutes: ignoreStartMinutes, endMinutes: ignoreEndMinutes, now: now)
+    }
+
+    private func formatMinutes(_ minutes: Int) -> String {
+        String(format: "%02d:%02d", minutes / 60, minutes % 60)
     }
 
     /// Called from `UsageService.fetchUsage()` after every successful fetch.
@@ -70,13 +126,24 @@ class ResetCommandService: ObservableObject {
         guard isEnabled else { return }
         guard didWindowReset(previous: previous, current: resetsAt, now: now) else { return }
 
+        if isInIgnoreWindow(now: now) {
+            appendLog("=== \(timestamp()) Reset detected but within ignore window "
+                + "(\(formatMinutes(ignoreStartMinutes))–\(formatMinutes(ignoreEndMinutes))) — skipping ===")
+            return
+        }
+
         runCommand()
     }
 
     /// Called once on app launch. Runs the command unconditionally when the
     /// setting is enabled, since there's no prior `resetsAt` to compare against yet.
-    func runOnAppLaunchIfEnabled() {
+    func runOnAppLaunchIfEnabled(now: Date = Date()) {
         guard isEnabled else { return }
+        if isInIgnoreWindow(now: now) {
+            appendLog("=== \(timestamp()) App launch within ignore window "
+                + "(\(formatMinutes(ignoreStartMinutes))–\(formatMinutes(ignoreEndMinutes))) — skipping ===")
+            return
+        }
         runCommand()
     }
 
@@ -146,6 +213,15 @@ class ResetCommandService: ObservableObject {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: shell)
         proc.arguments = ["-lc", command]
+
+        // Run from a dedicated empty directory. Without this the app's cwd (`/` or `~`
+        // for a GUI app) becomes `claude`'s project root, and its directory scan walks
+        // into TCC-protected folders (Downloads, Photos) — prompts get attributed to
+        // this app since it is the responsible parent process.
+        let workDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/ClaudeUsageBar/run", isDirectory: true)
+        try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+        proc.currentDirectoryURL = workDir
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()

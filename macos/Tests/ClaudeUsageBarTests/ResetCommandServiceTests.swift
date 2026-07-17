@@ -61,6 +61,73 @@ final class ResetCommandServiceTests: XCTestCase {
         XCTAssertFalse(didWindowReset(previous: old, current: curr, now: now))
     }
 
+    // MARK: - isWithinIgnoreWindow pure function
+
+    /// Builds a Date at the given local hour/minute using a fixed UTC calendar,
+    /// so the time-of-day extraction is deterministic regardless of test machine TZ.
+    private func time(_ hour: Int, _ minute: Int) -> (Date, Calendar) {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let date = cal.date(from: DateComponents(year: 2026, month: 7, day: 17, hour: hour, minute: minute))!
+        return (date, cal)
+    }
+
+    func testIgnoreWindow_insideDaytimeRange_returnsTrue() {
+        let (now, cal) = time(3, 30)
+        XCTAssertTrue(isWithinIgnoreWindow(startMinutes: 60, endMinutes: 300, now: now, calendar: cal))
+    }
+
+    func testIgnoreWindow_outsideDaytimeRange_returnsFalse() {
+        let (now, cal) = time(6, 0)
+        XCTAssertFalse(isWithinIgnoreWindow(startMinutes: 60, endMinutes: 300, now: now, calendar: cal))
+    }
+
+    func testIgnoreWindow_wrapsMidnight_lateNight_returnsTrue() {
+        // 23:00–07:00 quiet window, now = 02:00 → inside.
+        let (now, cal) = time(2, 0)
+        XCTAssertTrue(isWithinIgnoreWindow(startMinutes: 23 * 60, endMinutes: 7 * 60, now: now, calendar: cal))
+    }
+
+    func testIgnoreWindow_wrapsMidnight_evening_returnsTrue() {
+        // 23:00–07:00 quiet window, now = 23:30 → inside.
+        let (now, cal) = time(23, 30)
+        XCTAssertTrue(isWithinIgnoreWindow(startMinutes: 23 * 60, endMinutes: 7 * 60, now: now, calendar: cal))
+    }
+
+    func testIgnoreWindow_wrapsMidnight_daytime_returnsFalse() {
+        // 23:00–07:00 quiet window, now = 12:00 → outside.
+        let (now, cal) = time(12, 0)
+        XCTAssertFalse(isWithinIgnoreWindow(startMinutes: 23 * 60, endMinutes: 7 * 60, now: now, calendar: cal))
+    }
+
+    func testIgnoreWindow_startInclusive_endExclusive() {
+        let (start, cal) = time(1, 0)
+        XCTAssertTrue(isWithinIgnoreWindow(startMinutes: 60, endMinutes: 300, now: start, calendar: cal))
+        let (end, _) = time(5, 0)
+        XCTAssertFalse(isWithinIgnoreWindow(startMinutes: 60, endMinutes: 300, now: end, calendar: cal))
+    }
+
+    func testIgnoreWindow_zeroLength_matchesNothing() {
+        let (now, cal) = time(9, 0)
+        XCTAssertFalse(isWithinIgnoreWindow(startMinutes: 540, endMinutes: 540, now: now, calendar: cal))
+    }
+
+    // MARK: - ResetCommandService ignore-window setters
+
+    @MainActor
+    func testSetIgnoreWindow_persistsToUserDefaults() {
+        let svc = ResetCommandService()
+        svc.setIgnoreWindowEnabled(true)
+        svc.setIgnoreStartMinutes(22 * 60)
+        svc.setIgnoreEndMinutes(6 * 60)
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: "ignoreWindowEnabled"))
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "ignoreWindowStartMinutes"), 22 * 60)
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "ignoreWindowEndMinutes"), 6 * 60)
+        UserDefaults.standard.removeObject(forKey: "ignoreWindowEnabled")
+        UserDefaults.standard.removeObject(forKey: "ignoreWindowStartMinutes")
+        UserDefaults.standard.removeObject(forKey: "ignoreWindowEndMinutes")
+    }
+
     // MARK: - ResetCommandService.setEnabled
 
     @MainActor

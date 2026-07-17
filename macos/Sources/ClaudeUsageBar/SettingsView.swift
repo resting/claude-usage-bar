@@ -61,6 +61,35 @@ struct SettingsWindowContent: View {
                     Text("Output is logged to \(ResetCommandService.logFileURL.path(percentEncoded: false))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Toggle(
+                        "Ignore resets during a time range",
+                        isOn: Binding(
+                            get: { resetCommandService.ignoreWindowEnabled },
+                            set: { resetCommandService.setIgnoreWindowEnabled($0) }
+                        )
+                    )
+                    if resetCommandService.ignoreWindowEnabled {
+                        DatePicker(
+                            "From",
+                            selection: Binding(
+                                get: { timeOfDay(minutes: resetCommandService.ignoreStartMinutes) },
+                                set: { resetCommandService.setIgnoreStartMinutes(minutesSinceMidnight(from: $0)) }
+                            ),
+                            displayedComponents: .hourAndMinute
+                        )
+                        DatePicker(
+                            "To",
+                            selection: Binding(
+                                get: { timeOfDay(minutes: resetCommandService.ignoreEndMinutes) },
+                                set: { resetCommandService.setIgnoreEndMinutes(minutesSinceMidnight(from: $0)) }
+                            ),
+                            displayedComponents: .hourAndMinute
+                        )
+                        Text("Resets in this range are ignored and dropped — the command won't run for them. Ranges may span midnight.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
@@ -71,6 +100,17 @@ struct SettingsWindowContent: View {
             focusSettingsWindow()
         }
     }
+}
+
+/// Converts minutes-since-midnight into a `Date` on today's date for a `.hourAndMinute` picker.
+private func timeOfDay(minutes: Int) -> Date {
+    Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date()
+}
+
+/// Extracts minutes-since-midnight from a picker's `Date`.
+private func minutesSinceMidnight(from date: Date) -> Int {
+    let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+    return (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
 }
 
 @MainActor
